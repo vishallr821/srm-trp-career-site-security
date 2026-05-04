@@ -1,0 +1,11 @@
+node_modules/
+.env
+
+# Client specific
+client/node_modules/
+client/dist/
+client/.env
+
+# Server specific
+server/node_modules/
+server/.env

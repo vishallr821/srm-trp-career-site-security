@@ -1,0 +1,49 @@
+:root {
+  --bg: #fff5ef;             /* soft peachy background */
+  --surface: #ffffff;
+  --surface2: #fff0e8;
+  --primary: #e8742a;        /* peachy orange - main accent */
+  --primary-light: #fde8d8;
+  --primary-dark: #c45e1a;
+  --text: #111111;           /* black text */
+  --text-muted: #555555;
+  --text-light: #888888;
+  --border: #f0d9cc;
+  --border-dark: #e0c4b0;
+  --shadow: 0 12px 32px rgba(0,0,0,0.10);
+  --shadow-sm: 0 4px 14px rgba(0,0,0,0.07);
+  --radius: 18px;
+  --radius-sm: 10px;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  background-color: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Fraunces', serif;
+  color: var(--text);
+  font-weight: 600;
+}
+
+a {
+  color: var(--primary);
+  text-decoration: none;
+}
+
+a:hover {
+  color: var(--primary-dark);
+}
+
+button {
+  font-family: 'Plus Jakarta Sans', sans-serif;
+}
