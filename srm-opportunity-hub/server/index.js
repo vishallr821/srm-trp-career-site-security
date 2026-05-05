@@ -167,7 +167,7 @@ app.get('/api/csrf-token', (req, res) => {
   res.cookie('csrf_token', token, {
     httpOnly: false, // Must be readable by JS for double-submit pattern
     secure: isProduction,
-    sameSite: 'lax',
+    sameSite: isProduction ? 'none' : 'lax',
     path: '/',
   });
   res.json({ csrfToken: token });
@@ -298,7 +298,7 @@ app.post('/api/auth/register', authLimiter, [
     res.cookie('access_token', token, {
       httpOnly: true,
       secure: isProduction,
-      sameSite: 'lax',
+      sameSite: isProduction ? 'none' : 'lax',
       maxAge: 24 * 60 * 60 * 1000, // 1 day
       path: '/',
     });
@@ -375,7 +375,7 @@ app.post('/api/auth/login', authLimiter, [
     res.cookie('access_token', token, {
       httpOnly: true,
       secure: isProduction,
-      sameSite: 'lax',
+      sameSite: isProduction ? 'none' : 'lax',
       maxAge: 24 * 60 * 60 * 1000, // 1 day
       path: '/',
     });
@@ -399,8 +399,8 @@ app.post('/api/auth/login', authLimiter, [
 
 app.post('/api/auth/logout', (req, res) => {
   const isProduction = process.env.NODE_ENV === 'production';
-  res.clearCookie('access_token', { httpOnly: true, secure: isProduction, sameSite: 'lax', path: '/' });
-  res.clearCookie('csrf_token', { httpOnly: false, secure: isProduction, sameSite: 'lax', path: '/' });
+  res.clearCookie('access_token', { httpOnly: true, secure: isProduction, sameSite: isProduction ? 'none' : 'lax', path: '/' });
+  res.clearCookie('csrf_token', { httpOnly: false, secure: isProduction, sameSite: isProduction ? 'none' : 'lax', path: '/' });
   logger.info('User logged out');
   res.json({ message: 'Logged out successfully' });
 });
