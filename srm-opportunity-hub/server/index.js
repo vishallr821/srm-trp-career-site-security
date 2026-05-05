@@ -31,6 +31,7 @@ const logger = pino({
 const httpLogger = pinoHttp({ logger });
 
 const app = express();
+app.set('trust proxy', 1);
 
 // ─── SETUP: Security Headers ───
 app.disable('x-powered-by');
