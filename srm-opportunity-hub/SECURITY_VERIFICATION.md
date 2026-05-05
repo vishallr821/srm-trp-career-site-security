@@ -109,17 +109,18 @@ curl -X GET "$API_URL/api/auth/me" \
 
 ## Test 3: CSRF Token Protection
 
-**Test**: Verify CSRF tokens prevent state-changing requests without valid token
+**Test**: Verify double-submit cookie CSRF pattern prevents state-changing requests without valid token
 
 ```bash
-# Test 3a: Fetch CSRF token
+# Test 3a: Fetch CSRF token (sets csrf_token cookie + returns JSON)
 CSRF_TOKEN=$(curl -s -X GET "$API_URL/api/csrf-token" \
-  -b $COOKIE_JAR \
+  -b $COOKIE_JAR -c $COOKIE_JAR \
   | jq -r '.csrfToken')
 
 echo "CSRF Token: $CSRF_TOKEN"
 
 # Expected: UUID format token (36 characters, with dashes)
+# Also sets a non-HttpOnly cookie 'csrf_token' with the same value
 
 # Test 3b: Create bookmark WITHOUT CSRF token (should fail)
 curl -X POST "$API_URL/api/bookmarks" \
@@ -132,7 +133,19 @@ curl -X POST "$API_URL/api/bookmarks" \
 
 # Expected: 403 with error.code = 'CSRF_ERROR'
 
-# Test 3c: Create bookmark WITH valid CSRF token (should succeed)
+# Test 3c: Create bookmark WITH mismatched CSRF header (should fail)
+curl -X POST "$API_URL/api/bookmarks" \
+  -H "Content-Type: application/json" \
+  -H "X-CSRF-Token: wrong-token-value" \
+  -b $COOKIE_JAR \
+  -d '{
+    "opportunity_id": "hack-001",
+    "opportunity_type": "hackathon"
+  }'
+
+# Expected: 403 with error.code = 'CSRF_ERROR'
+
+# Test 3d: Create bookmark WITH valid CSRF token (should succeed)
 curl -X POST "$API_URL/api/bookmarks" \
   -H "Content-Type: application/json" \
   -H "X-CSRF-Token: $CSRF_TOKEN" \
@@ -144,7 +157,7 @@ curl -X POST "$API_URL/api/bookmarks" \
 
 # Expected: 201 with bookmark data
 
-# Test 3d: Reuse expired token (should fail - single-use)
+# Test 3e: Reuse the same token (should succeed - tokens are NOT single-use)
 curl -X POST "$API_URL/api/bookmarks" \
   -H "Content-Type: application/json" \
   -H "X-CSRF-Token: $CSRF_TOKEN" \
@@ -154,14 +167,16 @@ curl -X POST "$API_URL/api/bookmarks" \
     "opportunity_type": "hackathon"
   }'
 
-# Expected: 403 with error.code = 'CSRF_ERROR'
+# Expected: 201 with bookmark data (token reuse works until session ends)
 ```
 
 **Verification Points**:
 - ✅ CSRF token has UUID format
-- ✅ POST without token returns 403
-- ✅ POST with valid token succeeds
-- ✅ Token is single-use (reuse fails)
+- ✅ GET /api/csrf-token sets a readable (non-HttpOnly) `csrf_token` cookie
+- ✅ POST without header returns 403
+- ✅ POST with mismatched header/cookie returns 403
+- ✅ POST with matching header and cookie succeeds
+- ✅ Token is reusable (double-submit cookie pattern; no single-use deletion)
 
 ---
 
@@ -299,7 +314,7 @@ curl -s -X GET "$API_URL/api/auth/me" \
 ```bash
 # Test 8a: Attempt admin operation as student (should fail)
 CSRF_TOKEN=$(curl -s -X GET "$API_URL/api/csrf-token" \
-  -b $COOKIE_JAR | jq -r '.csrfToken')
+  -b $COOKIE_JAR -c $COOKIE_JAR | jq -r '.csrfToken')
 
 curl -s -X POST "$API_URL/api/admin/hackathons" \
   -H "Content-Type: application/json" \
@@ -418,7 +433,7 @@ curl -s -X POST "$API_URL/api/auth/register" \
 
 # 2. CSRF Token
 echo "✓ Testing CSRF token..."
-TOKEN=$(curl -s -X GET "$API_URL/api/csrf-token" -b $COOKIE_JAR | jq -r '.csrfToken')
+TOKEN=$(curl -s -X GET "$API_URL/api/csrf-token" -b $COOKIE_JAR -c $COOKIE_JAR | jq -r '.csrfToken')
 [ ! -z "$TOKEN" ] && echo "  ✓ CSRF token generated: ${TOKEN:0:8}..."
 
 # 3. Bookmarks with CSRF

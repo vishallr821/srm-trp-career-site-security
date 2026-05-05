@@ -13,7 +13,8 @@ export const AuthProvider = ({ children }) => {
     const initAuth = async () => {
       try {
         // Fetch CSRF token and store in sessionStorage
-        const csrfResponse = await fetch('/api/csrf-token', {
+        const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+        const csrfResponse = await fetch(`${apiUrl}/api/csrf-token`, {
           method: 'GET',
           credentials: 'include',
         });
