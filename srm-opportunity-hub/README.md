@@ -156,12 +156,13 @@ node index.js
   - See [express-rate-limit documentation](https://github.com/nfriedly/express-rate-limit#store) for setup
 
 ### CSRF Protection
-- Double-submit CSRF token pattern
-- Token issued on `GET /api/csrf-token` and stored in sessionStorage
-- Token validated on all state-changing requests (POST, PUT, DELETE)
-- Tokens single-use (deleted after validation)
-- Validated in headers: `X-CSRF-Token` for API calls
-- Protection applied to: bookmarks, admin operations
+- **Double-submit cookie** pattern (no server-side token store)
+- `GET /api/csrf-token` generates a random UUID, sets a readable (non-HttpOnly) `csrf_token` cookie, and returns `{ csrfToken }` in JSON
+- Client stores the token in `sessionStorage` and sends it in the `X-CSRF-Token` header on every state-changing request
+- Server middleware compares `req.cookies.csrf_token` with the `X-CSRF-Token` header; mismatch returns 403 `CSRF_ERROR`
+- Token is **not** deleted after use; a new token is issued each time the client loads (supporting multiple sequential requests)
+- Cookie options: `SameSite=Lax`, `Secure` in production, `Path=/` — **not** `HttpOnly` so JS can read it
+- Protection applied to: bookmarks (POST, DELETE), admin operations (POST, PUT, DELETE)
 
 ### Security Headers
 - Helmet.js enabled for security headers
@@ -213,7 +214,7 @@ Before deploying to production:
 - [ ] Ensure `VITE_API_URL` points to production API
 - [ ] Use HTTPS for `ALLOWED_ORIGINS`
 - [ ] Set cookies `secure: true` (automatic in production mode)
-- [ ] Verify CSRF protection is enabled on bookmarks and admin routes
+- [ ] Verify CSRF cookie (`csrf_token`) is set correctly on `GET /api/csrf-token`
 - [ ] Verify logging redaction is active (check logs for sensitive data)
 - [ ] Configure rate limiting per your capacity (switch to Redis for multi-instance)
 - [ ] Set up centralized logging (aggregate logs to external service)

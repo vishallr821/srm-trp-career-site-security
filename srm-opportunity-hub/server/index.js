@@ -6,7 +6,6 @@ const cookieParser = require('cookie-parser');
 const rateLimit = require('express-rate-limit');
 const pino = require('pino');
 const pinoHttp = require('pino-http');
-const csrf = require('csurf');
 const { body, validationResult, query } = require('express-validator');
 const { createClient } = require('@supabase/supabase-js');
 const jwt = require('jsonwebtoken');
@@ -88,12 +87,6 @@ const globalLimiter = rateLimit({
 
 app.use(globalLimiter);
 
-// ─── SETUP: CSRF Protection (Double-submit cookie) ───
-const csrfProtection = csrf({ cookie: false }); // We store CSRF token in memory/session
-
-// Store CSRF tokens in memory (in production, use Redis)
-const csrfTokens = new Map();
-
 // ─── SETUP: Request ID Middleware ───
 app.use((req, res, next) => {
   req.id = uuidv4();
@@ -146,18 +139,24 @@ const supabase = createClient(supabaseUrl, supabaseKey, {
 // ─── CSRF TOKEN ENDPOINT ───
 app.get('/api/csrf-token', (req, res) => {
   const token = uuidv4();
-  csrfTokens.set(token, Date.now());
+  const isProduction = process.env.NODE_ENV === 'production';
+  res.cookie('csrf_token', token, {
+    httpOnly: false, // Must be readable by JS for double-submit pattern
+    secure: isProduction,
+    sameSite: 'lax',
+    path: '/',
+  });
   res.json({ csrfToken: token });
 });
 
-// ─── Validate CSRF token helper ───
-const validateCSRFToken = (req) => {
-  const token = req.headers['x-csrf-token'] || req.body.csrfToken;
-  if (!csrfTokens.has(token)) {
-    return false;
+// ─── CSRF Middleware (double-submit cookie) ───
+const requireCsrf = (req, res, next) => {
+  const cookieToken = req.cookies.csrf_token;
+  const headerToken = req.headers['x-csrf-token'];
+  if (!cookieToken || !headerToken || cookieToken !== headerToken) {
+    return sendError(res, 403, 'Invalid or missing CSRF token', 'CSRF_ERROR', req.id);
   }
-  csrfTokens.delete(token);
-  return true;
+  next();
 };
 
 // ─── AUTH ROUTES ───
@@ -343,7 +342,9 @@ app.post('/api/auth/login', authLimiter, [
 });
 
 app.post('/api/auth/logout', (req, res) => {
-  res.clearCookie('access_token', { path: '/', sameSite: 'lax' });
+  const isProduction = process.env.NODE_ENV === 'production';
+  res.clearCookie('access_token', { httpOnly: true, secure: isProduction, sameSite: 'lax', path: '/' });
+  res.clearCookie('csrf_token', { httpOnly: false, secure: isProduction, sameSite: 'lax', path: '/' });
   logger.info('User logged out');
   res.json({ message: 'Logged out successfully' });
 });
@@ -517,7 +518,7 @@ app.get('/api/bookmarks', authenticateToken, async (req, res) => {
   }
 });
 
-app.post('/api/bookmarks', authenticateToken, [
+app.post('/api/bookmarks', authenticateToken, requireCsrf, [
   body('opportunity_id')
     .trim()
     .notEmpty()
@@ -528,11 +529,6 @@ app.post('/api/bookmarks', authenticateToken, [
     .isIn(['hackathon', 'internship', 'contest'])
     .withMessage('Invalid opportunity type'),
 ], async (req, res) => {
-  // Validate CSRF token
-  if (!validateCSRFToken(req)) {
-    return sendError(res, 403, 'Invalid or missing CSRF token', 'CSRF_ERROR', req.id);
-  }
-
   const validationError = handleValidationErrors(req, res);
   if (validationError) return;
 
@@ -558,16 +554,7 @@ app.post('/api/bookmarks', authenticateToken, [
   }
 });
 
-app.delete('/api/bookmarks/:opportunity_id', authenticateToken, [
-  body('csrfToken')
-    .optional()
-    .trim(),
-], async (req, res) => {
-  // Validate CSRF token
-  if (!validateCSRFToken(req)) {
-    return sendError(res, 403, 'Invalid or missing CSRF token', 'CSRF_ERROR', req.id);
-  }
-
+app.delete('/api/bookmarks/:opportunity_id', authenticateToken, requireCsrf, async (req, res) => {
   try {
     const { opportunity_id } = req.params;
 
@@ -592,11 +579,6 @@ app.delete('/api/bookmarks/:opportunity_id', authenticateToken, [
 
 // ─── ADMIN ROUTES ───
 const handleAdminAction = async (req, res, tableName, action) => {
-  // Validate CSRF token for all state-changing operations
-  if (!validateCSRFToken(req)) {
-    return sendError(res, 403, 'Invalid or missing CSRF token', 'CSRF_ERROR', req.id);
-  }
-
   try {
     const { id } = req.params;
 
@@ -631,13 +613,13 @@ const handleAdminAction = async (req, res, tableName, action) => {
 };
 
 ['hackathons', 'internships', 'contests'].forEach(table => {
-  app.post(`/api/admin/${table}`, authenticateToken, requireAdmin, (req, res) =>
+  app.post(`/api/admin/${table}`, authenticateToken, requireAdmin, requireCsrf, (req, res) =>
     handleAdminAction(req, res, table, 'insert')
   );
-  app.put(`/api/admin/${table}/:id`, authenticateToken, requireAdmin, (req, res) =>
+  app.put(`/api/admin/${table}/:id`, authenticateToken, requireAdmin, requireCsrf, (req, res) =>
     handleAdminAction(req, res, table, 'update')
   );
-  app.delete(`/api/admin/${table}/:id`, authenticateToken, requireAdmin, (req, res) =>
+  app.delete(`/api/admin/${table}/:id`, authenticateToken, requireAdmin, requireCsrf, (req, res) =>
     handleAdminAction(req, res, table, 'delete')
   );
 });
@@ -654,11 +636,6 @@ app.use((err, req, res, next) => {
   // CORS errors
   if (err.message === 'Not allowed by CORS') {
     return sendError(res, 403, 'Origin not allowed', 'CORS_ERROR', req.id);
-  }
-
-  // CSRF errors
-  if (err.code === 'EBADCSRFTOKEN') {
-    return sendError(res, 403, 'Invalid CSRF token', 'CSRF_ERROR', req.id);
   }
 
   // Default error
