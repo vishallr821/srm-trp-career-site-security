@@ -6,45 +6,63 @@ const AuthContext = createContext();
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [csrfToken, setCsrfToken] = useState(null);
 
+  // Fetch CSRF token on app load
   useEffect(() => {
     const initAuth = async () => {
-      const token = localStorage.getItem('token');
-      if (token) {
-        try {
-          const userData = await authApi.getMe();
-          setUser(userData);
-        } catch (error) {
-          console.error("Token invalid or expired", error);
-          localStorage.removeItem('token');
+      try {
+        // Fetch CSRF token and store in sessionStorage
+        const csrfResponse = await fetch('/api/csrf-token', {
+          method: 'GET',
+          credentials: 'include',
+        });
+        if (csrfResponse.ok) {
+          const { csrfToken } = await csrfResponse.json();
+          setCsrfToken(csrfToken);
+          // Store in sessionStorage for axios interceptor
+          sessionStorage.setItem('csrfToken', csrfToken);
         }
+
+        // Try to validate existing session via /api/auth/me
+        const userData = await authApi.getMe();
+        setUser(userData);
+      } catch (error) {
+        // User not authenticated or session expired
+        console.log('Session not found or invalid');
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     };
     initAuth();
   }, []);
 
   const login = async (email, password) => {
     const data = await authApi.login(email, password);
-    localStorage.setItem('token', data.token);
+    // User data comes in response; token is stored in HttpOnly cookie by server
     setUser(data.user);
     return data;
   };
 
   const register = async (userData) => {
     const data = await authApi.register(userData);
-    localStorage.setItem('token', data.token);
+    // User data comes in response; token is stored in HttpOnly cookie by server
     setUser(data.user);
     return data;
   };
 
-  const logout = () => {
-    localStorage.removeItem('token');
+  const logout = async () => {
+    try {
+      await authApi.logout();
+    } catch (error) {
+      console.error('Logout error:', error);
+    }
     setUser(null);
+    // Cookie will be cleared by server
   };
 
   return (
-    <AuthContext.Provider value={{ user, login, register, logout, loading }}>
+    <AuthContext.Provider value={{ user, login, register, logout, loading, csrfToken }}>
       {children}
     </AuthContext.Provider>
   );
