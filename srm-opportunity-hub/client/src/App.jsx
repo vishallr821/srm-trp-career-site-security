@@ -3,7 +3,7 @@ import { Toaster } from 'react-hot-toast';
 
 class ErrorBoundary extends React.Component {
   constructor(props) { super(props); this.state = { hasError: false }; }
-  static getDerivedStateFromError(error) { return { hasError: true }; }
+  static getDerivedStateFromError() { return { hasError: true }; }
   componentDidCatch(error, errorInfo) { console.error("App Error:", error, errorInfo); }
   render() {
     if (this.state.hasError) {
@@ -26,15 +26,27 @@ import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import BookmarksPage from './pages/BookmarksPage';
 import AdminPage from './pages/AdminPage';
+import NotAuthorizedPage from './pages/NotAuthorizedPage';
 import Layout from './components/Layout';
+import LoadingSpinner from './components/LoadingSpinner';
 
 const ProtectedRoute = ({ children, requireAdmin = false }) => {
   const { user, loading } = useAuth();
   
-  if (loading) return <div>Loading...</div>;
+  if (loading) return <LoadingSpinner />;
   if (!user) return <Navigate to="/login" replace />;
   if (requireAdmin && user.role !== 'admin') return <Navigate to="/" replace />;
   
+  return children;
+};
+
+const AdminRoute = ({ children }) => {
+  const { user, loading } = useAuth();
+
+  if (loading) return <LoadingSpinner />;
+  if (!user) return <Navigate to="/login" replace />;
+  if (user.role !== 'admin') return <NotAuthorizedPage />;
+
   return children;
 };
 
@@ -62,9 +74,9 @@ function AppRoutes() {
       <Route 
         path="/admin" 
         element={
-          <ProtectedRoute requireAdmin={true}>
+          <AdminRoute>
             <AdminPage />
-          </ProtectedRoute>
+          </AdminRoute>
         } 
       />
     </Routes>

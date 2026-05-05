@@ -36,7 +36,7 @@ export default function Layout({ children }) {
         </div>
         
         <div className="navbar-center">
-          <Link to="/" className="nav-link">Home</Link>
+          {user && <Link to="/" className="nav-link">Home</Link>}
           {user && <Link to="/bookmarks" className="nav-link">Bookmarks</Link>}
           {user && user.role === 'admin' && <Link to="/admin" className="nav-link">Admin</Link>}
         </div>

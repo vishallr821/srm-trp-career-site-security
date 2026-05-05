@@ -1,37 +1,71 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import toast from 'react-hot-toast';
 import api from '../api/axios';
+import * as adminApi from '../api/admin';
 import * as oppApi from '../api/opportunities';
 import './AdminPage.css';
 
 const DEPTS = ['cse', 'ece', 'eee', 'mech', 'civil', 'all'];
+const TABS = ['hackathons', 'internships', 'contests', 'analytics'];
 
 export default function AdminPage() {
   const [activeTab, setActiveTab] = useState('hackathons');
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [analytics, setAnalytics] = useState(null);
   
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [formData, setFormData] = useState({});
 
-  useEffect(() => {
-    fetchData();
-  }, [activeTab]);
+  const getApiErrorMessage = (err, fallback = 'Something went wrong') => {
+    const apiError = err?.response?.data?.error;
+    if (apiError?.details && Array.isArray(apiError.details)) {
+      const fieldMessages = apiError.details.map((d) => d.message).join(', ');
+      return `${apiError.message}: ${fieldMessages}`;
+    }
+    return apiError?.message || err?.message || fallback;
+  };
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     setLoading(true);
     try {
+      if (activeTab === 'analytics') {
+        const analyticsData = await adminApi.getAnalytics();
+        setAnalytics(analyticsData);
+        setData([]);
+        return;
+      }
+
       let res;
       if (activeTab === 'hackathons') res = await oppApi.getHackathons();
       if (activeTab === 'internships') res = await oppApi.getInternships();
       if (activeTab === 'contests') res = await oppApi.getContests();
       setData(res);
     } catch (err) {
-      console.error(err);
+      toast.error(getApiErrorMessage(err, 'Failed to load admin data'));
     } finally {
       setLoading(false);
     }
+  }, [activeTab]);
+
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      fetchData();
+    }, 0);
+
+    return () => clearTimeout(timeoutId);
+  }, [fetchData]);
+
+  const validatePayload = (payload) => {
+    if (!payload.name?.trim()) return 'Name is required';
+    if (!payload.org?.trim()) return 'Organization is required';
+    if (!payload.date?.trim()) return 'Date is required';
+    if (!payload.level || !['national', 'international'].includes(payload.level)) return 'Level is invalid';
+    if (!Array.isArray(payload.depts) || payload.depts.length === 0) return 'Select at least one department';
+    if (!payload.link?.trim()) return 'Official link is required';
+    return null;
   };
 
   const getEmptyForm = () => {
@@ -45,36 +79,48 @@ export default function AdminPage() {
     if (activeTab === 'contests') {
       return { ...base, rounds: [], round_detail: '', prize: '', perks: '', jobs: false };
     }
+    return base;
   };
 
   const openAddModal = () => {
+    if (activeTab === 'analytics') return;
     setFormData(getEmptyForm());
     setIsEditing(false);
     setIsModalOpen(true);
   };
 
   const openEditModal = (item) => {
+    if (activeTab === 'analytics') return;
     setFormData({ ...item });
     setIsEditing(true);
     setIsModalOpen(true);
   };
 
   const handleDelete = async (id) => {
+    if (activeTab === 'analytics') return;
     if (!window.confirm(`Are you sure you want to delete this ${activeTab.slice(0, -1)}?`)) return;
     
     try {
       await api.delete(`/api/admin/${activeTab}/${id}`);
+      toast.success('Deleted successfully');
       fetchData();
     } catch (err) {
-      alert(err.response?.data?.error || 'Failed to delete');
+      toast.error(getApiErrorMessage(err, 'Failed to delete'));
     }
   };
 
   const handleSave = async (e) => {
     e.preventDefault();
+    if (activeTab === 'analytics') return;
     try {
       // Validate array parsing
       const payload = { ...formData };
+
+      const validationError = validatePayload(payload);
+      if (validationError) {
+        toast.error(validationError);
+        return;
+      }
       
       // Auto-generate ID if inserting
       if (!isEditing && !payload.id) {
@@ -86,10 +132,11 @@ export default function AdminPage() {
       } else {
         await api.post(`/api/admin/${activeTab}`, payload);
       }
+      toast.success(isEditing ? 'Updated successfully' : 'Created successfully');
       setIsModalOpen(false);
       fetchData();
     } catch (err) {
-      alert(err.response?.data?.error || 'Failed to save');
+      toast.error(getApiErrorMessage(err, 'Failed to save'));
     }
   };
 
@@ -128,12 +175,78 @@ export default function AdminPage() {
     </div>
   );
 
+  const renderAnalytics = () => {
+    const stats = analytics || {
+      users_total: 0,
+      users_by_department: { cse: 0, ece: 0, eee: 0, mech: 0, civil: 0 },
+      bookmarks_total: 0,
+      top_bookmarked: [],
+    };
+
+    return (
+      <div className="analytics-panel">
+        <div className="analytics-grid">
+          <div className="analytics-card">
+            <div className="analytics-label">Total Users</div>
+            <div className="analytics-value">{stats.users_total}</div>
+          </div>
+          <div className="analytics-card">
+            <div className="analytics-label">Total Bookmarks</div>
+            <div className="analytics-value">{stats.bookmarks_total}</div>
+          </div>
+        </div>
+
+        <div className="analytics-section">
+          <h2 className="analytics-heading">Users by Department</h2>
+          <div className="analytics-dept-grid">
+            {Object.entries(stats.users_by_department || {}).map(([dept, count]) => (
+              <div key={dept} className="analytics-dept-card">
+                <span>{dept.toUpperCase()}</span>
+                <strong>{count}</strong>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="analytics-section">
+          <h2 className="analytics-heading">Top Bookmarked Opportunities</h2>
+          <div className="table-container">
+            <table className="admin-table">
+              <thead>
+                <tr>
+                  <th>Type</th>
+                  <th>Opportunity ID</th>
+                  <th>Bookmarks</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(stats.top_bookmarked || []).length === 0 ? (
+                  <tr>
+                    <td colSpan="3" style={{ textAlign: 'center' }}>No bookmarks yet.</td>
+                  </tr>
+                ) : (
+                  stats.top_bookmarked.map((item) => (
+                    <tr key={`${item.opportunity_type}-${item.opportunity_id}`}>
+                      <td>{item.opportunity_type}</td>
+                      <td>{item.opportunity_id}</td>
+                      <td>{item.count}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="admin-page">
       <header className="admin-header">
         <h1 className="admin-title">Admin Dashboard</h1>
         <div className="admin-tabs">
-          {['hackathons', 'internships', 'contests'].map(tab => (
+          {TABS.map(tab => (
             <button 
               key={tab}
               className={`admin-tab ${activeTab === tab ? 'active' : ''}`}
@@ -145,14 +258,18 @@ export default function AdminPage() {
         </div>
       </header>
 
-      <div className="admin-actions">
-        <button className="btn-primary" onClick={openAddModal}>+ Add New {activeTab.slice(0, -1)}</button>
-      </div>
+      {activeTab !== 'analytics' && (
+        <div className="admin-actions">
+          <button className="btn-primary" onClick={openAddModal}>+ Add New {activeTab.slice(0, -1)}</button>
+        </div>
+      )}
 
-      <div className="table-container">
-        {loading ? (
-          <div style={{ padding: '2rem', textAlign: 'center' }}>Loading...</div>
-        ) : (
+      {loading ? (
+        <div style={{ padding: '2rem', textAlign: 'center' }}>Loading...</div>
+      ) : activeTab === 'analytics' ? (
+        renderAnalytics()
+      ) : (
+        <div className="table-container">
           <table className="admin-table">
             <thead>
               <tr>
@@ -189,10 +306,10 @@ export default function AdminPage() {
               )}
             </tbody>
           </table>
-        )}
-      </div>
+        </div>
+      )}
 
-      {isModalOpen && (
+      {isModalOpen && activeTab !== 'analytics' && (
         <div className="modal-overlay">
           <div className="modal-content">
             <div className="modal-header">

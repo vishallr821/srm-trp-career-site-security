@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import './Auth.css';
@@ -10,7 +10,8 @@ export default function RegisterPage() {
     department: 'CSE',
     year: '1',
     password: '',
-    confirm_password: ''
+    confirm_password: '',
+    registerAsAdmin: false
   });
   const [error, setError] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -34,8 +35,11 @@ export default function RegisterPage() {
   ];
 
   const handleChange = (e) => {
-    const { name, value } = e.target;
-    setFormData(prev => ({ ...prev, [name]: value }));
+    const { name, value, type, checked } = e.target;
+    setFormData(prev => ({
+      ...prev,
+      [name]: type === 'checkbox' ? checked : value
+    }));
   };
 
   const handleSubmit = async (e) => {
@@ -54,16 +58,27 @@ export default function RegisterPage() {
     setIsLoading(true);
     
     try {
-      await register({
+      const payload = {
         email: formData.email,
         password: formData.password,
         full_name: formData.full_name,
         department: formData.department.toLowerCase(),
         year: parseInt(formData.year)
-      });
+      };
+
+      if (formData.registerAsAdmin) {
+        payload.role = 'admin';
+      }
+
+      await register(payload);
       navigate('/');
     } catch (err) {
-      setError(err.response?.data?.error || err.message || 'Failed to register');
+      const apiError = err.response?.data?.error;
+      if (apiError?.code === 'DOMAIN_RESTRICTED') {
+        setError(apiError.message);
+      } else {
+        setError(apiError?.message || err.message || 'Failed to register');
+      }
     } finally {
       setIsLoading(false);
     }
@@ -100,8 +115,9 @@ export default function RegisterPage() {
               required
               value={formData.email}
               onChange={handleChange}
-              placeholder="student@srmtrp.edu.in"
+              placeholder="name@trp.srmtrichy.edu.in"
             />
+            <div className="auth-hint">Use your college email ending with @trp.srmtrichy.edu.in</div>
           </div>
 
           <div className="form-grid">
@@ -161,6 +177,16 @@ export default function RegisterPage() {
               />
             </div>
           </div>
+
+          <label className="auth-checkbox">
+            <input
+              type="checkbox"
+              name="registerAsAdmin"
+              checked={formData.registerAsAdmin}
+              onChange={handleChange}
+            />
+            <span>Register as Admin (temporary)</span>
+          </label>
           
           <button type="submit" className="auth-btn" disabled={isLoading}>
             {isLoading ? 'Creating Account...' : 'Register'}

@@ -43,6 +43,24 @@
   gap: 0.4rem;
 }
 
+.auth-hint {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.auth-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.95rem;
+  color: var(--text);
+}
+
+.auth-checkbox input {
+  width: 1rem;
+  height: 1rem;
+}
+
 .form-group label {
   font-weight: 600;
   font-size: 0.9rem;

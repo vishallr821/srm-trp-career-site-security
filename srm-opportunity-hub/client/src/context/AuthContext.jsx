@@ -1,5 +1,6 @@
-import React, { createContext, useState, useEffect, useContext } from 'react';
+import { createContext, useState, useEffect, useContext, useRef } from 'react';
 import * as authApi from '../api/auth';
+import { ensureCsrfToken } from '../api/axios';
 
 const AuthContext = createContext();
 
@@ -7,34 +8,30 @@ export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [csrfToken, setCsrfToken] = useState(null);
+  const didInit = useRef(false);
 
   // Fetch CSRF token on app load
   useEffect(() => {
     const initAuth = async () => {
       try {
-        // Fetch CSRF token and store in sessionStorage
-        const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
-        const csrfResponse = await fetch(`${apiUrl}/api/csrf-token`, {
-          method: 'GET',
-          credentials: 'include',
-        });
-        if (csrfResponse.ok) {
-          const { csrfToken } = await csrfResponse.json();
-          setCsrfToken(csrfToken);
-          // Store in sessionStorage for axios interceptor
-          sessionStorage.setItem('csrfToken', csrfToken);
+        // Fetch CSRF token using shared axios client and store in sessionStorage
+        const token = await ensureCsrfToken();
+        if (token) {
+          setCsrfToken(token);
         }
 
         // Try to validate existing session via /api/auth/me
         const userData = await authApi.getMe();
         setUser(userData);
-      } catch (error) {
+      } catch {
         // User not authenticated or session expired
         console.log('Session not found or invalid');
       } finally {
         setLoading(false);
       }
     };
+    if (didInit.current) return;
+    didInit.current = true;
     initAuth();
   }, []);
 
@@ -69,4 +66,5 @@ export const AuthProvider = ({ children }) => {
   );
 };
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const useAuth = () => useContext(AuthContext);

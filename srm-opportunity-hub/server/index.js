@@ -136,6 +136,30 @@ const supabase = createClient(supabaseUrl, supabaseKey, {
   }
 });
 
+// TEMP LOG: expose whether service key is present and its length (avoid printing the key)
+logger.info(
+  { hasServiceKey: !!supabaseKey, serviceKeyLen: supabaseKey?.length },
+  'Supabase env check'
+);
+
+// Log the decoded role of the Supabase key (safe: role and issuer only, no sensitive data)
+try {
+  const decoded = jwt.decode(supabaseKey);
+  logger.info({ supabaseKeyRole: decoded?.role, supabaseKeyIssuer: decoded?.iss }, 'Supabase key role check');
+} catch (e) {
+  logger.warn({ error: e?.message }, 'Could not decode Supabase key');
+}
+
+const allowedEmailDomain = (process.env.ALLOWED_EMAIL_DOMAIN || 'trp.srmtrichy.edu.in').toLowerCase();
+
+// Disable caching for API responses (dynamic data; avoid stale 304/ETag issues)
+app.use('/api', (req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  next();
+});
+
 // ─── CSRF TOKEN ENDPOINT ───
 app.get('/api/csrf-token', (req, res) => {
   const token = uuidv4();
@@ -178,12 +202,32 @@ app.post('/api/auth/register', authLimiter, [
   body('year')
     .isInt({ min: 1, max: 4 })
     .withMessage('Year must be between 1 and 4'),
+  body('role')
+    .optional()
+    .trim()
+    .toLowerCase()
+    .isIn(['student', 'admin'])
+    .withMessage('Invalid role'),
 ], async (req, res) => {
   const validationError = handleValidationErrors(req, res);
   if (validationError) return;
 
   try {
-    const { email, password, full_name, department, year } = req.body;
+    const { email, password, full_name, department, year, role } = req.body;
+    const emailDomain = email.split('@')[1]?.toLowerCase();
+
+    if (emailDomain !== allowedEmailDomain) {
+      return sendError(
+        res,
+        400,
+        'Registration is restricted to TRP SRM Trichy email IDs (@trp.srmtrichy.edu.in).',
+        'DOMAIN_RESTRICTED',
+        req.id
+      );
+    }
+
+    // TEMP: admin self-registration is enabled for bootstrapping; remove later
+    const resolvedRole = role === 'admin' ? 'admin' : 'student';
 
     // 1. Create user in auth.users
     const { data: authData, error: authError } = await supabase.auth.admin.createUser({
@@ -199,31 +243,43 @@ app.post('/api/auth/register', authLimiter, [
 
     const userId = authData.user.id;
 
-    // 2. Insert into public.profiles (ENFORCE consistency)
+    // 2. Upsert into public.profiles to make registration idempotent.
+    // Using upsert on `id` prevents duplicate primary-key failures if the
+    // profile row already exists (e.g. retry or race conditions).
+    const profileRow = {
+      id: userId,
+      email,
+      full_name,
+      department,
+      year,
+      role: resolvedRole
+    };
+
     const { data: profileData, error: profileError } = await supabase
       .from('profiles')
-      .insert({
-        id: userId,
-        email,
-        full_name,
-        department,
-        year,
-        role: 'student'
-      })
+      .upsert(profileRow, { onConflict: 'id' })
       .select()
       .single();
 
-    // If profile creation fails, delete the auth user to maintain consistency
     if (profileError) {
-      logger.error({ userId, email, error: profileError.message }, 'Profile creation failed, rolling back');
-      
-      // Attempt to delete the created auth user
+      // Log the detailed error server-side (with request id) but don't leak internals to client
+      logger.error({ userId, email, error: profileError }, 'Profile upsert failed');
+
+      // Detect uniqueness/constraint violations (best-effort). Map to 409.
+      const msg = String(profileError.message || '').toLowerCase();
+      const isUniqueConstraint = msg.includes('unique') || msg.includes('duplicate') || (profileError.code && String(profileError.code) === '23505');
+
+      // Attempt to rollback the created auth user for non-idempotent failures.
       try {
         await supabase.auth.admin.deleteUser(userId);
       } catch (deleteErr) {
-        logger.error({ userId }, 'Failed to rollback auth user');
+        logger.error({ userId, deleteErr }, 'Failed to rollback auth user after profile upsert error');
       }
-      
+
+      if (isUniqueConstraint) {
+        return sendError(res, 409, 'Profile conflict: an account with this email already exists', 'PROFILE_CONFLICT', req.id);
+      }
+
       return sendError(res, 500, 'Profile creation failed', 'PROFILE_CREATION_FAILED', req.id);
     }
 
@@ -582,7 +638,8 @@ const handleAdminAction = async (req, res, tableName, action) => {
   try {
     const { id } = req.params;
 
-    if (!id || id.length > 100) {
+    // Only validate `id` for update/delete actions. Insert does not provide an :id param.
+    if ((action === 'update' || action === 'delete') && (!id || id.length > 100)) {
       return sendError(res, 400, 'Invalid ID format', 'VALIDATION_ERROR', req.id);
     }
 
@@ -600,7 +657,13 @@ const handleAdminAction = async (req, res, tableName, action) => {
       }
       result = await supabase.from(tableName).update(req.body).eq('id', id).select().single();
     } else if (action === 'delete') {
-      result = await supabase.from(tableName).delete().eq('id', id);
+      // FIX: Chain .select() to force Supabase to return the deleted row
+      result = await supabase.from(tableName).delete().eq('id', id).select();
+
+      // If no error, but data is empty, it means 0 rows were deleted!
+      if (!result.error && result.data.length === 0) {
+        return sendError(res, 403, 'Delete failed: Item not found or blocked by RLS.', 'DELETE_FAILED', req.id);
+      }
     }
 
     if (result.error) throw result.error;
@@ -622,6 +685,58 @@ const handleAdminAction = async (req, res, tableName, action) => {
   app.delete(`/api/admin/${table}/:id`, authenticateToken, requireAdmin, requireCsrf, (req, res) =>
     handleAdminAction(req, res, table, 'delete')
   );
+});
+
+app.get('/api/admin/analytics', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const [profilesResult, bookmarksResult] = await Promise.all([
+      supabase.from('profiles').select('department'),
+      supabase.from('bookmarks').select('opportunity_type, opportunity_id'),
+    ]);
+
+    const { data: profilesData, error: profilesError } = profilesResult;
+    const { data: bookmarksData, error: bookmarksError } = bookmarksResult;
+
+    if (profilesError) throw profilesError;
+    if (bookmarksError) throw bookmarksError;
+
+    const departments = ['cse', 'ece', 'eee', 'mech', 'civil'];
+    const usersByDepartment = departments.reduce((acc, department) => {
+      acc[department] = 0;
+      return acc;
+    }, {});
+
+    (profilesData || []).forEach((profile) => {
+      const department = profile.department?.toLowerCase();
+      if (department && Object.prototype.hasOwnProperty.call(usersByDepartment, department)) {
+        usersByDepartment[department] += 1;
+      }
+    });
+
+    const bookmarkCounts = new Map();
+    (bookmarksData || []).forEach((bookmark) => {
+      const key = `${bookmark.opportunity_type || 'unknown'}::${bookmark.opportunity_id || 'unknown'}`;
+      bookmarkCounts.set(key, (bookmarkCounts.get(key) || 0) + 1);
+    });
+
+    const topBookmarked = Array.from(bookmarkCounts.entries())
+      .map(([key, count]) => {
+        const [opportunity_type, opportunity_id] = key.split('::');
+        return { opportunity_type, opportunity_id, count };
+      })
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10);
+
+    res.json({
+      users_total: profilesData?.length || 0,
+      users_by_department: usersByDepartment,
+      bookmarks_total: bookmarksData?.length || 0,
+      top_bookmarked: topBookmarked,
+    });
+  } catch (err) {
+    logger.error({ admin: req.user.id, error: err.message }, 'Admin analytics error');
+    sendError(res, 500, 'Failed to load analytics', 'ANALYTICS_ERROR', req.id);
+  }
 });
 
 // ─── 404 HANDLER ───

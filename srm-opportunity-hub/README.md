@@ -50,6 +50,7 @@ JWT_SECRET=your_super_secure_jwt_secret_min_32_chars
 
 # Security
 ALLOWED_ORIGINS=http://localhost:5173,https://yourdomain.com
+ALLOWED_EMAIL_DOMAIN=trp.srmtrichy.edu.in
 
 # Rate Limiting (optional - uses defaults if not set)
 AUTH_RATE_WINDOW_MS=900000
@@ -118,10 +119,16 @@ node index.js
 | `SUPABASE_SERVICE_KEY` | Service role key (KEEP SECRET) | From Supabase dashboard |
 | `JWT_SECRET` | JWT signing secret (32+ chars) | `your-secret-key` |
 | `ALLOWED_ORIGINS` | Allowed CORS origins | `http://localhost:5173,https://yourdomain.com` |
+| `ALLOWED_EMAIL_DOMAIN` | Allowed registration domain | `trp.srmtrichy.edu.in` |
 | `AUTH_RATE_WINDOW_MS` | Rate limit window (ms) | `900000` (15 min) |
 | `AUTH_RATE_MAX` | Max auth attempts per window | `5` |
 | `GLOBAL_RATE_WINDOW_MS` | Global rate limit window | `900000` |
 | `GLOBAL_RATE_MAX` | Max requests per window | `100` |
+
+**Email Domain Restriction**
+- `ALLOWED_EMAIL_DOMAIN` controls which email domain is allowed for new registrations.
+- Default: `trp.srmtrichy.edu.in` if not set.
+- Existing users can still log in with any email domain.
 
 ### Client (.env)
 | Variable | Description |
@@ -234,6 +241,9 @@ Before deploying to production:
 - `POST /api/auth/logout` - Logout user
 - `GET /api/auth/me` - Get current user profile
 - `GET /api/csrf-token` - Get CSRF token (if needed)
+
+### Admin Analytics
+- `GET /api/admin/analytics` - Admin-only dashboard summary for users, departments, bookmarks, and top bookmarked opportunities
 
 ### Opportunities (Requires Auth)
 - `GET /api/hackathons` - Get hackathons with filters
